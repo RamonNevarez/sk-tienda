@@ -4,6 +4,10 @@ import os
 def database_url():
     configured_url = os.getenv('DATABASE_URL')
     if configured_url:
+        if configured_url.startswith('postgres://'):
+            return configured_url.replace('postgres://', 'postgresql+psycopg://', 1)
+        if configured_url.startswith('postgresql://'):
+            return configured_url.replace('postgresql://', 'postgresql+psycopg://', 1)
         if configured_url.startswith('sqlite:///'):
             database_path = configured_url.removeprefix('sqlite:///')
             if database_path.startswith('/'):

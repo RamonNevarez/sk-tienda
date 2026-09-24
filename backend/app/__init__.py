@@ -6,6 +6,8 @@ from sqlalchemy import inspect, text
 from dotenv import load_dotenv
 import os
 
+load_dotenv()
+
 from app.config import Config
 
 

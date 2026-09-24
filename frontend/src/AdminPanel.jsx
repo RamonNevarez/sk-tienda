@@ -64,9 +64,18 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
   useEffect(() => {
     if (!token) return
     fetch(`${API_BASE_URL}/products/admin`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((response) => response.json())
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.msg || data.error || 'Sesión administrativa inválida')
+        if (!Array.isArray(data)) throw new Error('Respuesta inválida del servidor')
+        return data
+      })
       .then(setAdminProducts)
-      .catch(() => setError('No se pudo cargar el listado de productos'))
+      .catch((loadError) => {
+        sessionStorage.removeItem('adminToken')
+        setToken('')
+        setError(loadError.message)
+      })
   }, [token])
 
   const login = async (event) => {

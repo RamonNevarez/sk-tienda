@@ -34,108 +34,6 @@ import SearchIcon from '@mui/icons-material/Search'
 import ClearIcon from '@mui/icons-material/Clear'
 import AdminPanel from './AdminPanel.jsx'
 
-const fallbackProducts = [
-  {
-    id: 1,
-    name: 'Bolso negro',
-    category: 'Bolsos',
-    price: 650,
-    wholesalePrice: 580,
-    wholesaleMinQty: 6,
-    available: true,
-    image:
-      'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=900&q=80',
-    description: 'Bolso de uso diario con cierre reforzado y amplio compartimento.',
-    colors: [
-      { name: 'Negro', hex: '#111827' },
-      { name: 'Marrón', hex: '#7c4b3a' },
-      { name: 'Beige', hex: '#d6c1a5' },
-    ],
-  },
-  {
-    id: 2,
-    name: 'Cartera beige',
-    category: 'Carteras',
-    price: 300,
-    wholesalePrice: 260,
-    wholesaleMinQty: 6,
-    available: true,
-    image:
-      'https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=900&q=80',
-    description: 'Cartera elegante para uso diario, con estilo minimalista.',
-    colors: [
-      { name: 'Beige', hex: '#d7c7aa' },
-      { name: 'Camel', hex: '#b88e5c' },
-      { name: 'Negro', hex: '#1f2937' },
-    ],
-  },
-  {
-    id: 3,
-    name: 'Riñonera marrón',
-    category: 'Accesorios',
-    price: 420,
-    wholesalePrice: 360,
-    wholesaleMinQty: 6,
-    available: false,
-    image:
-      'https://images.unsplash.com/photo-1525966222134-fcfa99b8ae77?auto=format&fit=crop&w=900&q=80',
-    description: 'Accesorio funcional para quienes buscan comodidad y estilo.',
-    colors: [
-      { name: 'Marrón', hex: '#7c4b3a' },
-      { name: 'Oliva', hex: '#6b7a5a' },
-    ],
-  },
-  {
-    id: 4,
-    name: 'Billetera clásica',
-    category: 'Carteras',
-    price: 240,
-    wholesalePrice: 210,
-    wholesaleMinQty: 6,
-    available: true,
-    image:
-      'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80',
-    description: 'Diseño clásico para llevar tus esenciales con orden.',
-    colors: [
-      { name: 'Negro', hex: '#111827' },
-      { name: 'Miel', hex: '#d7b889' },
-    ],
-  },
-  {
-    id: 5,
-    name: 'Bolso color arena',
-    category: 'Bolsos',
-    price: 720,
-    wholesalePrice: 650,
-    wholesaleMinQty: 6,
-    available: true,
-    image:
-      'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=900&q=80',
-    description: 'Bolso de temporada, elegante y práctico para todos los días.',
-    colors: [
-      { name: 'Arena', hex: '#d9c4a7' },
-      { name: 'Verde', hex: '#647b63' },
-      { name: 'Negro', hex: '#20242a' },
-    ],
-  },
-]
-
-const fallbackCategories = ['Todos', ...new Set(fallbackProducts.map((product) => product.category))]
-const fallbackProductsWithVariants = fallbackProducts.map((product) => ({
-  ...product,
-  variants: product.colors.map((color) => ({
-    id: `${product.id}-${color.name}`,
-    name: color.name,
-    image_url: product.image,
-    image: product.image,
-    price: product.price,
-    wholesale_price: product.wholesalePrice,
-    wholesalePrice: product.wholesalePrice,
-    wholesale_min_qty: product.wholesaleMinQty,
-    wholesaleMinQty: product.wholesaleMinQty,
-    available: product.available,
-  })),
-}))
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 const PRODUCT_PLACEHOLDER = '/placeholder-product.svg'
 
@@ -157,8 +55,8 @@ const getUnitPrice = (item) => {
 function App() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [products, setProducts] = useState(fallbackProductsWithVariants)
-  const [categories, setCategories] = useState(fallbackCategories)
+  const [products, setProducts] = useState([])
+  const [categories, setCategories] = useState(['Todos'])
   const [selectedCategory, setSelectedCategory] = useState('Todos')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedProduct, setSelectedProduct] = useState(null)
@@ -462,7 +360,12 @@ function App() {
             )
           })}
         </Grid>
-        {visibleProducts.length === 0 && (
+        {!loading && !catalogError && products.length === 0 && (
+          <Alert severity="info" sx={{ mt: 3 }}>
+            Todavía no hay productos publicados.
+          </Alert>
+        )}
+        {!loading && products.length > 0 && visibleProducts.length === 0 && (
           <Alert severity="info" sx={{ mt: 3 }}>
             No encontramos productos con esos criterios.
           </Alert>
