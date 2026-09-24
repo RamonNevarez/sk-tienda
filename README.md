@@ -33,6 +33,14 @@ API: `http://localhost:5000/`
 
 Antes de publicar, configura secretos largos en `backend/.env`, cambia `CORS_ORIGINS` al dominio real y configura `VITE_API_URL` en el frontend con la URL pública de la API. No publiques `.env`, la base SQLite ni la carpeta `instance`.
 
+En Render, agrega un Persistent Disk montado en `/var/data` y configura:
+
+```env
+DATABASE_URL=sqlite:////var/data/store.db
+```
+
+Sin Persistent Disk, SQLite puede perderse cuando Render reinicie o vuelva a desplegar el servicio.
+
 Para servir el backend con Waitress:
 
 ```powershell
