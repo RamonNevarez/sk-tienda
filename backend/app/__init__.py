@@ -31,6 +31,7 @@ def _ensure_sqlite_columns():
             'color': 'VARCHAR(80)',
             'variant_id': 'INTEGER',
             'variant_name': 'VARCHAR(150)',
+            'selected_letter': 'VARCHAR(1)',
         },
     }
 
@@ -54,7 +55,7 @@ def create_app():
 
     with app.app_context():
         from app.models.user import User
-        from app.models.category import Category
+        from app.models.category import CATEGORY_ALIASES, STORE_CATEGORIES, Category
         from app.models.product import Product
         from app.models.product_variant import ProductVariant
         from app.models.order import Order
@@ -62,6 +63,30 @@ def create_app():
 
         db.create_all()
         _ensure_sqlite_columns()
+
+        order_item_columns = {column['name'] for column in inspect(db.engine).get_columns('order_items')}
+        if 'selected_letter' not in order_item_columns:
+            with db.engine.begin() as connection:
+                connection.execute(text('ALTER TABLE order_items ADD COLUMN selected_letter VARCHAR(1)'))
+
+        for category_name in STORE_CATEGORIES:
+            if not Category.query.filter_by(name=category_name).first():
+                db.session.add(Category(name=category_name))
+        db.session.flush()
+
+        for old_name, canonical_name in CATEGORY_ALIASES.items():
+            old_category = Category.query.filter_by(name=old_name.title()).first()
+            canonical_category = Category.query.filter_by(name=canonical_name).first()
+            if old_category and canonical_category:
+                Product.query.filter_by(category_id=old_category.id).update(
+                    {Product.category_id: canonical_category.id},
+                    synchronize_session=False,
+                )
+                db.session.execute(
+                    text('DELETE FROM categories WHERE id = :category_id'),
+                    {'category_id': old_category.id},
+                )
+        db.session.commit()
 
     from app.routes.auth import auth_bp
     from app.routes.products import products_bp

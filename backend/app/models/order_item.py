@@ -10,6 +10,7 @@ class OrderItem(db.Model):
     variant_id = db.Column(db.Integer, nullable=True)
     product_name = db.Column(db.String(150), nullable=False)
     variant_name = db.Column(db.String(150), nullable=True)
+    selected_letter = db.Column(db.String(1), nullable=True)
     color = db.Column(db.String(80), nullable=True)
     unit_price = db.Column(db.Float, nullable=False)
     quantity = db.Column(db.Integer, nullable=False)

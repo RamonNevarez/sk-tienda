@@ -16,17 +16,58 @@ import {
   TableBody,
   TableCell,
   TableHead,
+  TablePagination,
   TableRow,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
-import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
 const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+const ADMIN_CATEGORIES = ['Bolsos', 'Carteras', 'Tarjeteros', 'Accesorios']
+
+const fetchAdminProductPage = async (token, page, perPage, search) => {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+  if (search) params.set('search', search)
+  const response = await fetch(`${API_BASE_URL}/products/admin?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.msg || data.error || 'No se pudo cargar el listado')
+  if (Array.isArray(data)) {
+    const normalizedSearch = search.toLocaleLowerCase()
+    const matchingProducts = data.filter((product) => product.name.toLocaleLowerCase().includes(normalizedSearch))
+    const startIndex = (page - 1) * perPage
+    return {
+      items: matchingProducts.slice(startIndex, startIndex + perPage).map((product) => ({
+        id: product.id,
+        name: product.name,
+        category_id: product.category_id,
+        available: product.available,
+        variant_count: product.variants?.length || 0,
+      })),
+      page,
+      per_page: perPage,
+      total: matchingProducts.length,
+    }
+  }
+  if (!Array.isArray(data.items)) throw new Error('Respuesta inválida del listado de productos')
+  return data
+}
+
+const fetchAdminProductDetails = async (token, productId) => {
+  const headers = { Authorization: `Bearer ${token}` }
+  let response = await fetch(`${API_BASE_URL}/products/admin/${productId}`, { headers })
+  if (response.status === 404) {
+    response = await fetch(`${API_BASE_URL}/products/${productId}`, { headers })
+  }
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.msg || data.error || 'No se pudo abrir el producto')
+  return data
+}
 
 const emptyVariant = () => ({
   name: '',
@@ -43,9 +84,16 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
   const [form, setForm] = useState({ name: '', description: '', category_id: '', variants: [emptyVariant()] })
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [authenticating, setAuthenticating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [categoryOptions, setCategoryOptions] = useState([])
   const [adminProducts, setAdminProducts] = useState([])
+  const [adminProductsTotal, setAdminProductsTotal] = useState(0)
+  const [adminPage, setAdminPage] = useState(0)
+  const [adminRowsPerPage, setAdminRowsPerPage] = useState(25)
+  const [adminSearchInput, setAdminSearchInput] = useState('')
+  const [adminSearch, setAdminSearch] = useState('')
+  const [adminProductsLoading, setAdminProductsLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [uploadingVariant, setUploadingVariant] = useState(null)
@@ -54,45 +102,72 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
   const [syncPreview, setSyncPreview] = useState(null)
   const [syncing, setSyncing] = useState(false)
 
+  const reloadAdminProducts = async (page = adminPage, search = adminSearch, rowsPerPage = adminRowsPerPage) => {
+    if (!token) return
+    setAdminProductsLoading(true)
+    try {
+      const data = await fetchAdminProductPage(token, page + 1, rowsPerPage, search)
+      setAdminProducts(data.items)
+      setAdminProductsTotal(data.total)
+    } catch (loadError) {
+      setError(loadError.message)
+    } finally {
+      setAdminProductsLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetch(`${API_BASE_URL}/categories`)
       .then((response) => response.json())
-      .then(setCategoryOptions)
+      .then((categories) => setCategoryOptions(
+        categories.filter((category) => ADMIN_CATEGORIES.includes(category.name)),
+      ))
       .catch(() => setCategoryOptions([]))
   }, [])
 
   useEffect(() => {
     if (!token) return
-    fetch(`${API_BASE_URL}/products/admin`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.msg || data.error || 'Sesión administrativa inválida')
-        if (!Array.isArray(data)) throw new Error('Respuesta inválida del servidor')
-        return data
+    let active = true
+    fetchAdminProductPage(token, adminPage + 1, adminRowsPerPage, adminSearch)
+      .then((data) => {
+        if (!active) return
+        setAdminProducts(data.items)
+        setAdminProductsTotal(data.total)
       })
-      .then(setAdminProducts)
       .catch((loadError) => {
+        if (!active) return
         sessionStorage.removeItem('adminToken')
         setToken('')
         setError(loadError.message)
       })
-  }, [token])
+      .finally(() => {
+        if (active) setAdminProductsLoading(false)
+      })
+    return () => { active = false }
+  }, [token, adminPage, adminRowsPerPage, adminSearch])
 
   const login = async (event) => {
     event.preventDefault()
     setError('')
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
-    })
-    const data = await response.json()
-    if (!response.ok) {
-      setError(data.error || 'No se pudo iniciar sesión')
-      return
+    setAuthenticating(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.error || 'Usuario o contraseña incorrectos')
+        return
+      }
+      sessionStorage.setItem('adminToken', data.access_token)
+      setToken(data.access_token)
+    } catch {
+      setError('No se pudo conectar con el servidor. Revisa la URL de la API y tu conexión.')
+    } finally {
+      setAuthenticating(false)
     }
-    sessionStorage.setItem('adminToken', data.access_token)
-    setToken(data.access_token)
   }
 
   const updateVariant = (index, field, value) => {
@@ -161,31 +236,37 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
       setError(data.error || 'No se pudo guardar el producto')
       return
     }
-    setMessage(editingId ? 'Producto actualizado correctamente' : 'Producto creado correctamente')
+    const wasEditing = Boolean(editingId)
+    setMessage(wasEditing ? 'Producto actualizado correctamente' : 'Producto creado correctamente')
     setForm({ name: '', description: '', category_id: '', variants: [emptyVariant()] })
     setEditingId(null)
     setFormOpen(false)
-    const productsResponse = await fetch(`${API_BASE_URL}/products/admin`, { headers: { Authorization: `Bearer ${token}` } })
-    setAdminProducts(await productsResponse.json())
+    await reloadAdminProducts()
     onSaved()
   }
 
-  const editProduct = (product) => {
-    setEditingId(product.id)
-    setForm({
-      name: product.name,
-      description: product.description || '',
-      category_id: product.category_id,
-      variants: product.variants.map((variant) => ({
-        name: variant.name,
-        image_url: variant.image_url || '',
-        price: variant.price,
-        wholesale_price: variant.wholesale_price ?? '',
-        wholesale_min_qty: variant.wholesale_min_qty || 6,
-        available: variant.available,
-      })),
-    })
-    setFormOpen(true)
+  const editProduct = async (product) => {
+    setError('')
+    try {
+      const details = await fetchAdminProductDetails(token, product.id)
+      setEditingId(details.id)
+      setForm({
+        name: details.name,
+        description: details.description || '',
+        category_id: details.category_id,
+        variants: details.variants.map((variant) => ({
+          name: variant.name,
+          image_url: variant.image_url || '',
+          price: variant.price,
+          wholesale_price: variant.wholesale_price ?? '',
+          wholesale_min_qty: variant.wholesale_min_qty || 6,
+          available: variant.available,
+        })),
+      })
+      setFormOpen(true)
+    } catch (loadError) {
+      setError(loadError.message)
+    }
   }
 
   const deleteProduct = async (product) => {
@@ -199,6 +280,12 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
       return
     }
     setAdminProducts((current) => current.filter((item) => item.id !== product.id))
+    setAdminProductsTotal((current) => Math.max(0, current - 1))
+    if (adminProducts.length === 1 && adminPage > 0) {
+      setAdminPage((current) => current - 1)
+    } else {
+      await reloadAdminProducts()
+    }
     onSaved()
   }
 
@@ -221,8 +308,7 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
         throw new Error([data.error, ...(data.details || [])].filter(Boolean).join('. '))
       }
       setMessage(`${data.products_created} producto(s) importado(s) correctamente`)
-      const productsResponse = await fetch(`${API_BASE_URL}/products/admin`, { headers: { Authorization: `Bearer ${token}` } })
-      setAdminProducts(await productsResponse.json())
+      await reloadAdminProducts()
       onSaved()
     } catch (importError) {
       setError(importError.message)
@@ -264,8 +350,7 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
       if (!response.ok) throw new Error(data.error || 'No se pudo aplicar la sincronización')
       setMessage(`Sincronización aplicada: ${data.created} creados, ${data.updated} actualizados`)
       setSyncPreview(null)
-      const productsResponse = await fetch(`${API_BASE_URL}/products/admin`, { headers: { Authorization: `Bearer ${token}` } })
-      setAdminProducts(await productsResponse.json())
+      await reloadAdminProducts()
       onSaved()
     } catch (syncError) {
       setError(syncError.message)
@@ -301,7 +386,9 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
               onChange={(event) => setCredentials({ ...credentials, password: event.target.value })}
               required
             />
-            <Button type="submit" variant="contained">Iniciar sesión</Button>
+            <Button type="submit" variant="contained" disabled={authenticating}>
+              {authenticating ? 'Conectando...' : 'Iniciar sesión'}
+            </Button>
           </Box>
         ) : (
           <Box sx={{ pt: 1 }}>
@@ -384,6 +471,32 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
               )}
             </Paper>
 
+            <Box
+              component="form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const nextSearch = adminSearchInput.trim()
+                setAdminProductsLoading(true)
+                setAdminPage(0)
+                if (nextSearch === adminSearch && adminPage === 0) {
+                  reloadAdminProducts(0, nextSearch)
+                } else {
+                  setAdminSearch(nextSearch)
+                }
+              }}
+              sx={{ mb: 2, display: 'flex', gap: 1 }}
+            >
+              <TextField
+                fullWidth
+                size="small"
+                label="Buscar producto"
+                placeholder="Escribe un nombre"
+                value={adminSearchInput}
+                onChange={(event) => setAdminSearchInput(event.target.value)}
+              />
+              <Button type="submit" variant="outlined">Buscar</Button>
+            </Box>
+
             <Paper variant="outlined" sx={{ overflowX: 'auto', mb: 3 }}>
               <Table size="small">
                 <TableHead>
@@ -391,23 +504,47 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
                     <TableCell>Producto</TableCell>
                     <TableCell>Variantes</TableCell>
                     <TableCell>Estado</TableCell>
-                      <TableCell align="right">Acciones</TableCell>
+                      <TableCell align="right">Eliminar</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {adminProducts.map((product) => (
-                    <TableRow key={product.id}>
+                  {adminProductsLoading ? (
+                    <TableRow><TableCell colSpan={4} align="center">Cargando productos...</TableCell></TableRow>
+                  ) : adminProducts.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} align="center">
+                        {adminSearch ? 'No se encontraron productos.' : 'Todavía no hay productos.'}
+                      </TableCell>
+                    </TableRow>
+                  ) : adminProducts.map((product) => (
+                    <TableRow
+                      key={product.id}
+                      hover
+                      tabIndex={0}
+                      aria-label={`Editar ${product.name}`}
+                      onClick={() => editProduct(product)}
+                      onKeyDown={(event) => {
+                        if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('button')) {
+                          event.preventDefault()
+                          editProduct(product)
+                        }
+                      }}
+                      sx={{ cursor: 'pointer' }}
+                    >
                       <TableCell>{product.name}</TableCell>
-                      <TableCell>{product.variants.length}</TableCell>
+                      <TableCell>{product.variant_count}</TableCell>
                       <TableCell>{product.available ? 'Disponible' : 'Inactivo'}</TableCell>
                       <TableCell align="right">
-                        <Tooltip title="Editar producto">
-                          <IconButton size="small" color="primary" onClick={() => editProduct(product)} aria-label={`Editar ${product.name}`}>
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
                         <Tooltip title="Eliminar producto">
-                          <IconButton size="small" color="error" onClick={() => deleteProduct(product)} aria-label={`Eliminar ${product.name}`}>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              deleteProduct(product)
+                            }}
+                            aria-label={`Eliminar ${product.name}`}
+                          >
                             <DeleteIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -416,6 +553,24 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
                   ))}
                 </TableBody>
               </Table>
+              <TablePagination
+                component="div"
+                count={adminProductsTotal}
+                page={adminPage}
+                rowsPerPage={adminRowsPerPage}
+                rowsPerPageOptions={[25, 50, 100]}
+                onPageChange={(_, nextPage) => {
+                  setAdminProductsLoading(true)
+                  setAdminPage(nextPage)
+                }}
+                onRowsPerPageChange={(event) => {
+                  setAdminProductsLoading(true)
+                  setAdminRowsPerPage(Number(event.target.value))
+                  setAdminPage(0)
+                }}
+                labelRowsPerPage="Filas por página"
+                labelDisplayedRows={({ from, to, count }) => `${from}-${to} de ${count}`}
+              />
             </Paper>
 
             {formOpen && (

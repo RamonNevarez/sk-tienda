@@ -6,6 +6,7 @@ from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
+from app.models.category import CATEGORY_ALIASES, STORE_CATEGORIES
 
 orders_bp = Blueprint('orders', __name__)
 
@@ -30,6 +31,7 @@ def get_orders():
                     'variant_id': item.variant_id,
                     'product_name': item.product_name,
                     'variant_name': item.variant_name,
+                    'selected_letter': item.selected_letter,
                     'color': item.color,
                     'unit_price': item.unit_price,
                     'quantity': item.quantity,
@@ -69,6 +71,15 @@ def create_order():
 
         product = db.session.get(Product, product_id) if product_id else None
         variant = db.session.get(ProductVariant, variant_id) if variant_id else None
+        selected_letter = str(item.get('selected_letter') or '').strip().upper() or None
+        category_name = product.category.name if product else None
+        category_name = CATEGORY_ALIASES.get(category_name.casefold(), category_name) if category_name else None
+        is_letter_product = bool(
+            product
+            and category_name == 'Accesorios'
+            and product.name.strip().casefold().startswith('letra')
+        )
+        valid_letters = set('ABCDEFGHIJKLMNÑOPQRSTUVWXYZ')
 
         if (
             not product
@@ -77,6 +88,8 @@ def create_order():
             or not product.available
             or not variant.available
             or quantity <= 0
+            or (is_letter_product and selected_letter not in valid_letters)
+            or (selected_letter is not None and (not is_letter_product or selected_letter not in valid_letters))
         ):
             db.session.rollback()
             return jsonify({'error': 'El pedido contiene un producto inválido o no disponible'}), 400
@@ -95,6 +108,7 @@ def create_order():
             variant_id=variant.id,
             product_name=product.name,
             variant_name=variant.name,
+            selected_letter=selected_letter,
             unit_price=unit_price,
             quantity=quantity,
             subtotal=subtotal,

@@ -6,9 +6,10 @@ from urllib.parse import parse_qs, urlparse
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from openpyxl import load_workbook
+from sqlalchemy import func
 
 from app import db
-from app.models.category import Category
+from app.models.category import CATEGORY_ALIASES, STORE_CATEGORIES, Category
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
 
@@ -132,12 +133,21 @@ def parse_import_data(rows):
     errors = []
     for row_number, row in enumerate(rows, start=2):
         product_name = import_value(row, 'Producto', 'product', 'Product')
-        category_name = import_value(row, 'Categoría', 'Categoria', 'category', 'Category')
+        raw_category_name = import_value(row, 'Categoría', 'Categoria', 'category', 'Category')
+        category_name = None
+        if raw_category_name:
+            category_key = str(raw_category_name).strip().casefold()
+            canonical_categories = {name.casefold(): name for name in STORE_CATEGORIES}
+            canonical_categories.update(CATEGORY_ALIASES)
+            category_name = canonical_categories.get(category_key)
         variant_name = import_value(row, 'Variante', 'variant', 'Variant')
         price = import_value(row, 'Precio', 'price', 'Price')
 
         if not product_name or not category_name or not variant_name or price in (None, ''):
-            errors.append(f'Fila {row_number}: Producto, Categoría, Variante y Precio son obligatorios')
+            if raw_category_name and not category_name:
+                errors.append(f'Fila {row_number}: categoría no válida. Usa Bolsos, Carteras, Tarjeteros o Accesorios')
+            else:
+                errors.append(f'Fila {row_number}: Producto, Categoría, Variante y Precio son obligatorios')
             continue
 
         try:
@@ -298,8 +308,60 @@ def apply_sync():
 @products_bp.get('/admin')
 @jwt_required()
 def get_admin_products():
-    products = Product.query.order_by(Product.id.asc()).all()
-    return jsonify([serialize_product(product) for product in products])
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        per_page = min(100, max(1, int(request.args.get('per_page', 25))))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'page y per_page deben ser números enteros'}), 400
+
+    search = str(request.args.get('search', '')).strip()[:120]
+    query = Product.query
+    if search:
+        query = query.filter(Product.name.ilike(f'%{search}%'))
+
+    total = query.count()
+    variant_count = (
+        db.session.query(func.count(ProductVariant.id))
+        .filter(ProductVariant.product_id == Product.id)
+        .correlate(Product)
+        .scalar_subquery()
+    )
+    products = (
+        query.with_entities(
+            Product.id,
+            Product.name,
+            Product.category_id,
+            Product.available,
+            variant_count.label('variant_count'),
+        )
+        .order_by(Product.id.asc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return jsonify({
+        'items': [
+            {
+                'id': product.id,
+                'name': product.name,
+                'category_id': product.category_id,
+                'available': product.available,
+                'variant_count': product.variant_count,
+            }
+            for product in products
+        ],
+        'page': page,
+        'per_page': per_page,
+        'total': total,
+    })
+
+
+@products_bp.get('/admin/<int:product_id>')
+@jwt_required()
+def get_admin_product(product_id):
+    product = Product.query.get_or_404(product_id)
+    return jsonify(serialize_product(product))
 
 
 @products_bp.get('/<int:product_id>')

@@ -7,17 +7,21 @@ import App from './App.jsx'
 
 const theme = createTheme({
   palette: {
-    mode: 'dark',
+    mode: 'light',
     primary: {
-      main: '#d8a84e',
-      contrastText: '#17130c',
+      main: '#c97998',
+      contrastText: '#ffffff',
     },
     secondary: {
-      main: '#e6b95f',
+      main: '#26151d',
     },
     background: {
-      default: '#111315',
-      paper: '#1b1e22',
+      default: '#fffbfc',
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#24151c',
+      secondary: '#705b65',
     },
   },
   shape: {
@@ -30,7 +34,7 @@ const theme = createTheme({
     MuiCard: {
       styleOverrides: {
         root: {
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          border: '1px solid #edd6df',
           backgroundImage: 'none',
         },
       },
@@ -39,7 +43,7 @@ const theme = createTheme({
       styleOverrides: {
         paper: {
           backgroundImage: 'none',
-          borderLeft: '1px solid rgba(255, 255, 255, 0.08)',
+          borderLeft: '1px solid #edd6df',
         },
       },
     },

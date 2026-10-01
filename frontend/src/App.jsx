@@ -28,14 +28,36 @@ import {
   Toolbar,
   Typography,
   TextField,
+  MenuItem,
 } from '@mui/material'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import SearchIcon from '@mui/icons-material/Search'
 import ClearIcon from '@mui/icons-material/Clear'
+import AddIcon from '@mui/icons-material/Add'
+import RemoveIcon from '@mui/icons-material/Remove'
 import AdminPanel from './AdminPanel.jsx'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 const PRODUCT_PLACEHOLDER = '/placeholder-product.svg'
+const STORE_CATEGORIES = ['Bolsos', 'Carteras', 'Tarjeteros', 'Accesorios']
+const ALPHABET = [...'ABCDEFGHIJKLMN', 'Ñ', ...'OPQRSTUVWXYZ']
+const CATEGORY_ALIASES = {
+  bolso: 'Bolsos',
+  cartera: 'Carteras',
+  tarjetero: 'Tarjeteros',
+  accesorio: 'Accesorios',
+}
+
+const normalizeCategory = (name) => {
+  const normalized = String(name || '').trim().toLocaleLowerCase('es')
+  return STORE_CATEGORIES.find((category) => category.toLocaleLowerCase('es') === normalized)
+    || CATEGORY_ALIASES[normalized]
+    || name
+}
+
+const isLetterAccessory = (product) =>
+  normalizeCategory(product.category) === 'Accesorios'
+  && product.name.trim().toLocaleLowerCase('es').startsWith('letra')
 
 const formatCurrency = (value) =>
   new Intl.NumberFormat('es-AR', {
@@ -56,15 +78,19 @@ function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const [products, setProducts] = useState([])
-  const [categories, setCategories] = useState(['Todos'])
+  const [categories, setCategories] = useState(['Todos', ...STORE_CATEGORIES])
   const [selectedCategory, setSelectedCategory] = useState('Todos')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [variantQuantities, setVariantQuantities] = useState({})
+  const [selectedLetters, setSelectedLetters] = useState({})
+  const [activeLetter, setActiveLetter] = useState('')
   const [loading, setLoading] = useState(true)
   const [catalogError, setCatalogError] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
   const [addedMessage, setAddedMessage] = useState('')
+  const [orderError, setOrderError] = useState('')
+  const [sendingOrder, setSendingOrder] = useState(false)
   const [cart, setCart] = useState([])
 
   useEffect(() => {
@@ -88,7 +114,7 @@ function App() {
         const categoryNames = Object.fromEntries(apiCategories.map((category) => [category.id, category.name]))
         const normalizedProducts = apiProducts.map((product) => ({
           ...product,
-          category: categoryNames[product.category_id] || 'Sin categoría',
+          category: normalizeCategory(categoryNames[product.category_id] || 'Sin categoría'),
           wholesalePrice: product.wholesale_price,
           wholesaleMinQty: product.wholesale_min_qty || 6,
           image: product.image_url || PRODUCT_PLACEHOLDER,
@@ -101,7 +127,7 @@ function App() {
         }))
 
         setProducts(normalizedProducts)
-        setCategories(['Todos', ...apiCategories.map((category) => category.name)])
+        setCategories(['Todos', ...STORE_CATEGORIES])
         setCatalogError('')
       } catch {
         setCatalogError('No se pudo conectar con el catálogo. Mostrando datos de ejemplo.')
@@ -126,17 +152,17 @@ function App() {
     })
   }, [products, searchTerm, selectedCategory])
 
-  const addToCart = (product, variant, quantity = 1) => {
+  const addToCart = (product, variant, quantity = 1, selectedLetter = null) => {
     if (!product.available || !variant.available || quantity <= 0) return
 
     setCart((currentCart) => {
       const existingItem = currentCart.find(
-        (item) => item.variantId === variant.id,
+        (item) => item.variantId === variant.id && item.selectedLetter === selectedLetter,
       )
 
       if (existingItem) {
         return currentCart.map((item) =>
-          item.variantId === variant.id
+          item.variantId === variant.id && item.selectedLetter === selectedLetter
             ? { ...item, quantity: item.quantity + quantity }
             : item,
         )
@@ -149,6 +175,7 @@ function App() {
           variantId: variant.id,
           name: product.name,
           variantName: variant.name,
+          selectedLetter,
           price: variant.price,
           wholesalePrice: variant.wholesalePrice,
           wholesaleMinQty: variant.wholesaleMinQty,
@@ -157,13 +184,14 @@ function App() {
       ]
     })
 
-    setAddedMessage(`${product.name} - ${variant.name} se agregó al carrito`)
+    setAddedMessage(`${product.name} - ${variant.name}${selectedLetter ? ` (Letra ${selectedLetter})` : ''} se agregó al carrito`)
   }
 
-  const openProductVariants = (product) => {
+  const openProductVariants = (product, letter = '') => {
     setSelectedProduct(product)
+    setActiveLetter(letter)
     setVariantQuantities(Object.fromEntries(
-      product.variants.map((variant) => [variant.id, variant.available ? 1 : 0]),
+      product.variants.map((variant) => [variant.id, 0]),
     ))
   }
 
@@ -177,7 +205,8 @@ function App() {
   const addSelectedVariants = () => {
     if (!selectedProduct) return
     const selected = selectedProduct.variants.filter((variant) => (variantQuantities[variant.id] || 0) > 0)
-    selected.forEach((variant) => addToCart(selectedProduct, variant, variantQuantities[variant.id]))
+    const letter = isLetterAccessory(selectedProduct) ? activeLetter : null
+    selected.forEach((variant) => addToCart(selectedProduct, variant, variantQuantities[variant.id], letter))
     if (selected.length > 0) {
       const totalUnits = selected.reduce((sum, variant) => sum + variantQuantities[variant.id], 0)
       setAddedMessage(`${totalUnits} artículo(s) de ${selectedProduct.name} se agregaron al carrito`)
@@ -185,11 +214,11 @@ function App() {
     }
   }
 
-  const updateQuantity = (variantId, delta) => {
+  const updateQuantity = (variantId, selectedLetter, delta) => {
     setCart((currentCart) =>
       currentCart
         .map((item) =>
-          item.variantId === variantId
+          item.variantId === variantId && item.selectedLetter === selectedLetter
             ? { ...item, quantity: Math.max(0, item.quantity + delta) }
             : item,
         )
@@ -199,14 +228,41 @@ function App() {
 
   const total = cart.reduce((sum, item) => sum + getUnitPrice(item) * item.quantity, 0)
 
-  const createWhatsAppMessage = () => {
-    const lines = cart.map(
-      (item) => `• ${item.quantity} × ${item.name} - ${item.variantName} — ${formatCurrency(getUnitPrice(item) * item.quantity)}`,
-    )
+  const createWhatsAppMessage = async () => {
+    setOrderError('')
+    setSendingOrder(true)
+    const whatsappWindow = window.open('about:blank', '_blank')
+    const lines = cart.map((item) => {
+      const letterLabel = item.selectedLetter ? ` (Letra ${item.selectedLetter})` : ''
+      return `• ${item.quantity} × ${item.name} - ${item.variantName}${letterLabel} — ${formatCurrency(getUnitPrice(item) * item.quantity)}`
+    })
     const message = `Hola, quiero realizar el siguiente pedido:\n\n${lines.join('\n')}\n\nTotal: ${formatCurrency(total)}`
     const whatsappNumber = '526678435976'
     const url = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`
-    window.open(url, '_blank', 'noopener,noreferrer')
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cart.map((item) => ({
+            product_id: item.id,
+            variant_id: item.variantId,
+            quantity: item.quantity,
+            selected_letter: item.selectedLetter,
+          })),
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'No se pudo registrar el pedido')
+      if (whatsappWindow) whatsappWindow.location.href = url
+      else window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      whatsappWindow?.close()
+      setOrderError(error.message || 'No se pudo enviar el pedido')
+    } finally {
+      setSendingOrder(false)
+    }
   }
 
   if (location.pathname === '/admin') {
@@ -223,7 +279,7 @@ function App() {
         position="static"
         color="transparent"
         elevation={0}
-        sx={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
+        sx={{ borderBottom: '1px solid rgba(91, 37, 57, 0.16)' }}
       >
         <Toolbar sx={{ justifyContent: 'space-between', py: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -240,7 +296,7 @@ function App() {
               color="secondary"
               onClick={() => setCartOpen(true)}
               sx={{
-                backgroundColor: 'rgba(216, 168, 78, 0.16)',
+                backgroundColor: 'rgba(210, 137, 165, 0.18)',
                 borderRadius: 2,
                 width: 48,
                 height: 48,
@@ -263,7 +319,7 @@ function App() {
 
       <Container maxWidth="xl" sx={{ py: 4 }}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
-          <Typography variant="h3" component="h1" sx={{ fontWeight: 700, mb: 1 }}>
+          <Typography variant="h3" component="h1" sx={{ fontWeight: 700, mb: 1, fontSize: { xs: '2rem', sm: '3rem' } }}>
             SK Bolsos Personalizados
           </Typography>
           <Typography variant="subtitle1" color="text.secondary">
@@ -274,7 +330,23 @@ function App() {
           {loading && <Alert severity="info" sx={{ mb: 3 }}>Cargando catálogo...</Alert>}
           {catalogError && <Alert severity="warning" sx={{ mb: 3 }}>{catalogError}</Alert>}
 
-        <Stack direction="row" spacing={1} sx={{ mb: 4, flexWrap: 'wrap', gap: 1 }}>
+        <Stack
+          direction="row"
+          spacing={0}
+          sx={{
+            mb: 3,
+            width: '100%',
+            flexWrap: { xs: 'nowrap', sm: 'wrap' },
+            justifyContent: 'flex-start',
+            overflowX: { xs: 'auto', sm: 'visible' },
+            overflowY: 'hidden',
+            columnGap: 1,
+            rowGap: 1,
+            pb: 0.5,
+            scrollbarWidth: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
+        >
           {categories.map((category) => (
             <Chip
               key={category}
@@ -283,6 +355,7 @@ function App() {
               variant={selectedCategory === category ? 'filled' : 'outlined'}
               clickable
               onClick={() => setSelectedCategory(category)}
+              sx={{ width: 'auto', flexShrink: 0, justifyContent: 'center' }}
             />
           ))}
         </Stack>
@@ -310,49 +383,124 @@ function App() {
           }}
         />
 
-        <Grid container spacing={3}>
+        {orderError && <Alert severity="error" sx={{ mb: 3 }}>{orderError}</Alert>}
+
+        <Grid container spacing={{ xs: 1.5, sm: 3 }}>
           {visibleProducts.map((product) => {
             const primaryVariant = product.variants[0]
+            const singleAvailableVariant = product.variants.length === 1 ? product.variants[0] : null
+            const hasMultipleVariants = product.variants.length > 1
+            const letterProduct = isLetterAccessory(product)
+            const selectedLetter = selectedLetters[product.id] || ''
+            const productImage = (
+              <CardMedia
+                component="img"
+                image={primaryVariant?.image || product.image || PRODUCT_PLACEHOLDER}
+                alt={product.name}
+                sx={{ height: { xs: 132, sm: 190, md: 220 }, objectFit: 'cover' }}
+              />
+            )
 
             return (
-              <Grid size={{ xs: 12, sm: 6, lg: 4 }} key={product.id}>
+              <Grid size={{ xs: 6, sm: 6, md: 4, lg: 3 }} key={product.id}>
                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardMedia component="img" height="220" image={primaryVariant?.image || product.image || PRODUCT_PLACEHOLDER} alt={product.name} />
-                  <CardContent sx={{ flexGrow: 1 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      <Typography variant="h6" component="h2">
+                  {hasMultipleVariants ? (
+                    <Box
+                      component="button"
+                      type="button"
+                      onClick={() => openProductVariants(product, letterProduct ? selectedLetter : '')}
+                      aria-label={`Ver variantes de ${product.name}`}
+                      sx={{
+                        display: 'block',
+                        width: '100%',
+                        p: 0,
+                        border: 0,
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        lineHeight: 0,
+                        '&:focus-visible': { outline: '3px solid', outlineColor: 'primary.main', outlineOffset: -3 },
+                      }}
+                    >
+                      {productImage}
+                    </Box>
+                  ) : productImage}
+                  <CardContent sx={{ flexGrow: 1, p: { xs: 1.25, sm: 2 } }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 0.5, mb: 1 }}>
+                      <Typography variant="h6" component="h2" sx={{ fontSize: { xs: '0.95rem', sm: '1.25rem' }, lineHeight: 1.2 }}>
                         {product.name}
                       </Typography>
                       {product.available ? (
-                        <Chip label="Disponible" color="success" size="small" />
+                        <Chip label="Disponible" color="success" size="small" sx={{ height: { xs: 20, sm: 24 }, '& .MuiChip-label': { px: { xs: 0.75, sm: 1 } } }} />
                       ) : (
-                        <Chip label="Sin stock" color="error" size="small" />
+                        <Chip label="Sin stock" color="error" size="small" sx={{ height: { xs: 20, sm: 24 }, '& .MuiChip-label': { px: { xs: 0.75, sm: 1 } } }} />
                       )}
                     </Box>
 
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: { xs: '0.78rem', sm: '0.875rem' } }}>
                       {product.description}
                     </Typography>
 
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                      Desde {formatCurrency(primaryVariant?.price || product.price)}
+                    <Typography variant="h6" sx={{ fontWeight: 700, fontSize: { xs: '0.95rem', sm: '1.25rem' } }}>
+                      {singleAvailableVariant ? formatCurrency(singleAvailableVariant.price) : `Desde ${formatCurrency(primaryVariant?.price || product.price)}`}
                     </Typography>
 
-                    <Typography variant="caption" color="text.secondary">
-                      {product.variants.length} variantes disponibles
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: '0.68rem', sm: '0.75rem' } }}>
+                      {singleAvailableVariant
+                        ? singleAvailableVariant.wholesalePrice != null
+                          ? `Mayoreo desde ${singleAvailableVariant.wholesaleMinQty} piezas: ${formatCurrency(singleAvailableVariant.wholesalePrice)}`
+                          : `Presentación: ${singleAvailableVariant.name}`
+                        : `${product.variants.length} variantes`}
                     </Typography>
+                    {letterProduct && (
+                      <TextField
+                        select
+                        fullWidth
+                        size="small"
+                        label="Letra"
+                        value={selectedLetter}
+                        onChange={(event) => setSelectedLetters((current) => ({ ...current, [product.id]: event.target.value }))}
+                        sx={{ mt: 1.5 }}
+                      >
+                        {ALPHABET.map((letter) => <MenuItem key={letter} value={letter}>{letter}</MenuItem>)}
+                      </TextField>
+                    )}
                   </CardContent>
 
-                  <CardActions sx={{ px: 2, pb: 2, justifyContent: 'space-between' }}>
-                    <Typography variant="caption" color="text.secondary">
-                      {product.category}
-                    </Typography>
+                  <CardActions
+                    disableSpacing
+                    sx={{
+                      px: { xs: 1.25, sm: 2 },
+                      pb: { xs: 1.25, sm: 2 },
+                      pt: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                    }}
+                  >
                     <Button
+                      fullWidth
                       variant="contained"
-                      onClick={() => openProductVariants(product)}
-                      disabled={!product.variants.some((variant) => variant.available)}
+                      onClick={() => {
+                        if (letterProduct && !selectedLetter) return
+                        if (singleAvailableVariant) {
+                          addToCart(product, singleAvailableVariant, 1, letterProduct ? selectedLetter : null)
+                          return
+                        }
+                        openProductVariants(product, letterProduct ? selectedLetter : '')
+                      }}
+                      disabled={
+                        !product.variants.some((variant) => variant.available)
+                        || (letterProduct && !selectedLetter)
+                      }
+                      sx={{
+                        alignSelf: 'center',
+                        width: '100%',
+                        fontSize: { xs: '0.72rem', sm: '0.875rem' },
+                        px: { xs: 0.5, sm: 2 },
+                        minHeight: { xs: 38, sm: 42 },
+                      }}
                     >
-                      Ver variantes
+                      {singleAvailableVariant ? 'Agregar' : 'Ver variantes'}
                     </Button>
                   </CardActions>
                 </Card>
@@ -376,52 +524,88 @@ function App() {
         <DialogTitle>{selectedProduct?.name}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Selecciona una variante para agregarla al carrito.
+            {isLetterAccessory(selectedProduct || { category: '', name: '' })
+              ? 'Elige una letra y una variante para agregar al carrito.'
+              : 'Selecciona una variante para agregarla al carrito.'}
           </Typography>
+          {isLetterAccessory(selectedProduct || { category: '', name: '' }) && (
+            <TextField
+              select
+              fullWidth
+              label="Letra"
+              value={activeLetter}
+              onChange={(event) => setActiveLetter(event.target.value)}
+              sx={{ mb: 2 }}
+            >
+              {ALPHABET.map((letter) => <MenuItem key={letter} value={letter}>{letter}</MenuItem>)}
+            </TextField>
+          )}
           <Grid container spacing={2}>
             {selectedProduct?.variants.map((variant) => (
-              <Grid size={{ xs: 12, sm: 6 }} key={variant.id}>
-                <Card variant="outlined">
-                  <CardMedia component="img" height="170" image={variant.image || PRODUCT_PLACEHOLDER} alt={variant.name} />
-                  <CardContent>
-                    <Typography variant="h6">{variant.name}</Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              <Grid size={{ xs: 6, sm: 6 }} key={variant.id}>
+                <Card variant="outlined" sx={{ height: '100%', minWidth: 0, overflow: 'hidden' }}>
+                  <CardMedia
+                    component="img"
+                    image={variant.image || PRODUCT_PLACEHOLDER}
+                    alt={variant.name}
+                    sx={{ height: { xs: 105, sm: 170 }, objectFit: 'cover' }}
+                  />
+                  <CardContent sx={{ p: { xs: 1, sm: 2 }, minWidth: 0, '&:last-child': { pb: { xs: 1, sm: 2 } } }}>
+                    <Typography variant="h6" sx={{ fontSize: { xs: '0.95rem', sm: '1.25rem' }, lineHeight: 1.2 }}>
+                      {variant.name}
+                    </Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 700, fontSize: { xs: '0.95rem', sm: '1.25rem' }, mt: 0.5 }}>
                       {formatCurrency(variant.price)}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1, fontSize: { xs: '0.65rem', sm: '0.75rem' }, lineHeight: 1.25 }}>
                       Mayoreo desde {variant.wholesaleMinQty} unidades: {formatCurrency(variant.wholesalePrice)}
                     </Typography>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                      <Button
-                        variant="outlined"
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr auto 1fr',
+                        alignItems: 'center',
+                        justifyItems: 'center',
+                        width: '100%',
+                        minWidth: 0,
+                        gap: 0.5,
+                      }}
+                    >
+                      <IconButton
+                        size="small"
+                        sx={{ width: 38, height: 38, border: '1px solid', borderColor: 'divider', justifySelf: 'start' }}
                         onClick={() => updateVariantQuantity(variant.id, -1)}
                         disabled={!variant.available || !(variantQuantities[variant.id] > 0)}
                         aria-label={`Restar ${variant.name}`}
                       >
-                        −
-                      </Button>
-                      <Typography sx={{ minWidth: 24, textAlign: 'center', fontWeight: 700 }}>
-                        {variantQuantities[variant.id] || (variant.available ? 1 : 0)}
+                        <RemoveIcon fontSize="small" />
+                      </IconButton>
+                      <Typography sx={{ minWidth: 24, textAlign: 'center', fontWeight: 700, lineHeight: 1 }}>
+                        {variantQuantities[variant.id] ?? (variant.available ? 1 : 0)}
                       </Typography>
-                      <Button
-                        variant="outlined"
+                      <IconButton
+                        size="small"
+                        sx={{ width: 38, height: 38, border: '1px solid', borderColor: 'divider', justifySelf: 'end' }}
                         onClick={() => updateVariantQuantity(variant.id, 1)}
                         disabled={!variant.available}
                         aria-label={`Sumar ${variant.name}`}
                       >
-                        +
-                      </Button>
+                        <AddIcon fontSize="small" />
+                      </IconButton>
                     </Box>
                     <Button
                       fullWidth
                       variant="contained"
-                      sx={{ mt: 1.5 }}
+                      sx={{ mt: { xs: 1, sm: 1.5 }, width: '100%', minWidth: 0, whiteSpace: 'normal', lineHeight: 1.1, fontSize: { xs: '0.68rem', sm: '0.875rem' }, px: { xs: 0.5, sm: 2 } }}
                       onClick={() => {
                         const quantity = variantQuantities[variant.id] || 1
-                        addToCart(selectedProduct, variant, quantity)
-                        setVariantQuantities((current) => ({ ...current, [variant.id]: 1 }))
+                        addToCart(selectedProduct, variant, quantity, isLetterAccessory(selectedProduct) ? activeLetter : null)
+                        setVariantQuantities((current) => ({ ...current, [variant.id]: 0 }))
                       }}
-                      disabled={!variant.available}
+                      disabled={
+                        !variant.available
+                        || (isLetterAccessory(selectedProduct || { category: '', name: '' }) && !activeLetter)
+                      }
                     >
                       Agregar al carrito
                     </Button>
@@ -435,7 +619,10 @@ function App() {
             variant="contained"
             sx={{ mt: 3 }}
             onClick={addSelectedVariants}
-            disabled={!Object.values(variantQuantities).some((quantity) => quantity > 0)}
+                  disabled={
+                    !Object.values(variantQuantities).some((quantity) => quantity > 0)
+                    || (isLetterAccessory(selectedProduct || { category: '', name: '' }) && !activeLetter)
+                  }
           >
             Agregar seleccionados
           </Button>
@@ -461,10 +648,10 @@ function App() {
                 const itemTotal = getUnitPrice(item) * item.quantity
 
                 return (
-                  <ListItem key={`${item.id}-${item.variantId}`} disableGutters sx={{ display: 'block', mb: 2 }}>
+                  <ListItem key={`${item.id}-${item.variantId}-${item.selectedLetter || ''}`} disableGutters sx={{ display: 'block', mb: 2 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <ListItemText
-                        primary={`${item.name} - ${item.variantName}`}
+                        primary={`${item.name} - ${item.variantName}${item.selectedLetter ? ` (Letra ${item.selectedLetter})` : ''}`}
                         secondary={
                           item.quantity >= item.wholesaleMinQty
                             ? `Precio mayoreo: ${formatCurrency(getUnitPrice(item))}`
@@ -475,11 +662,11 @@ function App() {
 
                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 1 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <IconButton onClick={() => updateQuantity(item.variantId, -1)} aria-label="restar cantidad">
+                        <IconButton onClick={() => updateQuantity(item.variantId, item.selectedLetter, -1)} aria-label="restar cantidad">
                           −
                         </IconButton>
                         <Typography>{item.quantity}</Typography>
-                        <IconButton onClick={() => updateQuantity(item.variantId, 1)} aria-label="sumar cantidad">
+                        <IconButton onClick={() => updateQuantity(item.variantId, item.selectedLetter, 1)} aria-label="sumar cantidad">
                           +
                         </IconButton>
                       </Box>
@@ -507,9 +694,9 @@ function App() {
             variant="contained"
             color="success"
             onClick={createWhatsAppMessage}
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || sendingOrder}
           >
-            Pedir por WhatsApp
+            {sendingOrder ? 'Registrando pedido...' : 'Pedir por WhatsApp'}
           </Button>
         </Box>
       </Drawer>

@@ -1,5 +1,13 @@
 from app import db
 
+STORE_CATEGORIES = ('Bolsos', 'Carteras', 'Tarjeteros', 'Accesorios')
+CATEGORY_ALIASES = {
+    'bolso': 'Bolsos',
+    'cartera': 'Carteras',
+    'tarjetero': 'Tarjeteros',
+    'accesorio': 'Accesorios',
+}
+
 
 class Category(db.Model):
     __tablename__ = 'categories'
