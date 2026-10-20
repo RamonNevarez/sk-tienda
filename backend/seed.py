@@ -20,7 +20,8 @@ products = [
     },
     {
         'name': 'Cartera beige',
-        'category': 'Carteras',
+        'category': 'Cosmetiqueras',
+        'wholesale_enabled': True,
         'price': 300,
         'wholesale_price': 260,
         'image_url': 'https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=900&q=80',
@@ -33,7 +34,8 @@ products = [
     },
     {
         'name': 'Billetera clásica',
-        'category': 'Carteras',
+        'category': 'Cosmetiqueras',
+        'wholesale_enabled': True,
         'price': 240,
         'wholesale_price': 210,
         'image_url': 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80',
@@ -67,6 +69,7 @@ with app.app_context():
                 price=item['price'],
                 wholesale_price=item['wholesale_price'],
                 wholesale_min_qty=6,
+                wholesale_enabled=item.get('wholesale_enabled', False),
                 image_url=item['image_url'],
                 category_id=category.id,
                 available=True,

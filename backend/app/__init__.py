@@ -44,6 +44,33 @@ def _ensure_sqlite_columns():
                     connection.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}'))
 
 
+def _ensure_business_columns():
+    columns_by_table = {
+        'categories': {'wholesale_min_qty': 'INTEGER NOT NULL DEFAULT 6'},
+        'products': {'wholesale_enabled': 'BOOLEAN NOT NULL DEFAULT FALSE'},
+        'order_items': {'selected_dije': 'VARCHAR(40)'},
+    }
+
+    inspector = inspect(db.engine)
+    with db.engine.begin() as connection:
+        product_wholesale_flag_added = False
+        for table_name, columns in columns_by_table.items():
+            existing_columns = {column['name'] for column in inspector.get_columns(table_name)}
+            for column_name, definition in columns.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}'))
+                    if table_name == 'products' and column_name == 'wholesale_enabled':
+                        product_wholesale_flag_added = True
+
+        if product_wholesale_flag_added:
+            connection.execute(text(
+                'UPDATE products SET wholesale_enabled = TRUE '
+                'WHERE wholesale_price IS NOT NULL OR EXISTS '
+                '(SELECT 1 FROM product_variants WHERE product_variants.product_id = products.id '
+                'AND product_variants.wholesale_price IS NOT NULL)'
+            ))
+
+
 def create_app():
     load_dotenv()
     app = Flask(__name__)
@@ -63,6 +90,7 @@ def create_app():
 
         db.create_all()
         _ensure_sqlite_columns()
+        _ensure_business_columns()
 
         order_item_columns = {column['name'] for column in inspect(db.engine).get_columns('order_items')}
         if 'selected_letter' not in order_item_columns:

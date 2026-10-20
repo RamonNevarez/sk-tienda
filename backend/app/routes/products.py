@@ -24,7 +24,7 @@ def serialize_variant(variant):
         'image_url': variant.image_url,
         'price': variant.price,
         'wholesale_price': variant.wholesale_price,
-        'wholesale_min_qty': variant.wholesale_min_qty,
+        'wholesale_min_qty': variant.product.category.wholesale_min_qty,
         'available': variant.available,
     }
 
@@ -36,7 +36,8 @@ def serialize_product(product):
         'description': product.description,
         'price': product.price,
         'wholesale_price': product.wholesale_price,
-        'wholesale_min_qty': product.wholesale_min_qty,
+        'wholesale_min_qty': product.category.wholesale_min_qty,
+        'wholesale_enabled': product.wholesale_enabled,
         'variants': [serialize_variant(variant) for variant in product.variants],
         'image_url': product.image_url,
         'category_id': product.category_id,
@@ -50,7 +51,7 @@ def build_variant(data):
         image_url=data.get('image_url'),
         price=float(data['price']),
         wholesale_price=float(data['wholesale_price']) if data.get('wholesale_price') is not None else None,
-        wholesale_min_qty=int(data.get('wholesale_min_qty', 6)),
+        wholesale_min_qty=6,
         available=data.get('available', True),
     )
 
@@ -145,7 +146,7 @@ def parse_import_data(rows):
 
         if not product_name or not category_name or not variant_name or price in (None, ''):
             if raw_category_name and not category_name:
-                errors.append(f'Fila {row_number}: categoría no válida. Usa Bolsos, Carteras, Tarjeteros o Accesorios')
+                errors.append(f'Fila {row_number}: categoría no válida. Usa Bolsos, Cosmetiqueras, Tarjeteros o Accesorios')
             else:
                 errors.append(f'Fila {row_number}: Producto, Categoría, Variante y Precio son obligatorios')
             continue
@@ -154,7 +155,6 @@ def parse_import_data(rows):
             price = float(price)
             wholesale_price = import_value(row, 'Precio mayorista', 'Wholesale Price', 'wholesale_price')
             wholesale_price = float(wholesale_price) if wholesale_price not in (None, '') else None
-            wholesale_min_qty = int(import_value(row, 'Mayoreo desde', 'Wholesale Min Qty', 'wholesale_min_qty') or 6)
         except (TypeError, ValueError):
             errors.append(f'Fila {row_number}: los precios y cantidades deben ser numéricos')
             continue
@@ -165,7 +165,10 @@ def parse_import_data(rows):
             'image_url': str(import_value(row, 'Imagen', 'Image', 'image_url') or '').strip() or None,
             'price': price,
             'wholesale_price': wholesale_price,
-            'wholesale_min_qty': wholesale_min_qty,
+            'wholesale_enabled': parse_boolean(
+                import_value(row, 'Aplica mayoreo', 'Mayoreo aplica', 'Wholesale Applies', 'wholesale_enabled')
+            ) if import_value(row, 'Aplica mayoreo', 'Mayoreo aplica', 'Wholesale Applies', 'wholesale_enabled') is not None
+            else wholesale_price is not None,
             'available': parse_boolean(import_value(row, 'Disponible', 'Available', 'available')),
         })
     return grouped, errors
@@ -198,6 +201,15 @@ def product_change_summary(grouped):
                 changes.append({'type': 'updated', 'product': product_name, 'variant': variant.name, 'before': ', '.join(differences), 'after': 'Se actualizará'})
             else:
                 changes.append({'type': 'unchanged', 'product': product_name, 'variant': variant.name, 'before': 'Sin cambios', 'after': 'Sin cambios'})
+        expected_wholesale = any(variant_data['wholesale_enabled'] for variant_data in variants)
+        if product and product.wholesale_enabled != expected_wholesale:
+            changes.append({
+                'type': 'updated',
+                'product': product_name,
+                'variant': 'Todas',
+                'before': 'Mayoreo activo' if product.wholesale_enabled else 'Mayoreo inactivo',
+                'after': 'Mayoreo activo' if expected_wholesale else 'Mayoreo inactivo',
+            })
     return changes
 
 
@@ -218,7 +230,7 @@ def sync_grouped_products(grouped):
                 description=None,
                 price=variants[0]['price'],
                 wholesale_price=variants[0]['wholesale_price'],
-                wholesale_min_qty=variants[0]['wholesale_min_qty'],
+                wholesale_enabled=any(variant['wholesale_enabled'] for variant in variants),
                 image_url=variants[0]['image_url'],
                 category_id=category.id,
                 available=any(variant['available'] for variant in variants),
@@ -241,10 +253,10 @@ def sync_grouped_products(grouped):
             variant.image_url = variant_data['image_url']
             variant.price = variant_data['price']
             variant.wholesale_price = variant_data['wholesale_price']
-            variant.wholesale_min_qty = variant_data['wholesale_min_qty']
             variant.available = variant_data['available']
             updated += 1
 
+        product.wholesale_enabled = any(variant['wholesale_enabled'] for variant in variants)
         product.available = any(variant.available for variant in product.variants)
 
     db.session.commit()
@@ -387,7 +399,7 @@ def create_product():
         description=data.get('description'),
         price=float(data.get('price', 0)),
         wholesale_price=float(data['wholesale_price']) if data.get('wholesale_price') is not None else None,
-        wholesale_min_qty=int(data.get('wholesale_min_qty', 6)),
+        wholesale_enabled=bool(data.get('wholesale_enabled', False)),
         image_url=data.get('image_url'),
         category_id=data['category_id'],
         available=data.get('available', True),
@@ -415,36 +427,7 @@ def import_products():
     if not rows:
         return jsonify({'error': 'El archivo no contiene filas'}), 400
 
-    grouped = {}
-    errors = []
-    for row_number, row in enumerate(rows, start=2):
-        product_name = import_value(row, 'Producto', 'product', 'Product')
-        category_name = import_value(row, 'Categoría', 'Categoria', 'category', 'Category')
-        variant_name = import_value(row, 'Variante', 'variant', 'Variant')
-        price = import_value(row, 'Precio', 'price', 'Price')
-
-        if not product_name or not category_name or not variant_name or price in (None, ''):
-            errors.append(f'Fila {row_number}: Producto, Categoría, Variante y Precio son obligatorios')
-            continue
-
-        try:
-            price = float(price)
-            wholesale_price = import_value(row, 'Precio mayorista', 'Wholesale Price', 'wholesale_price')
-            wholesale_price = float(wholesale_price) if wholesale_price not in (None, '') else None
-            wholesale_min_qty = int(import_value(row, 'Mayoreo desde', 'Wholesale Min Qty', 'wholesale_min_qty') or 6)
-        except (TypeError, ValueError):
-            errors.append(f'Fila {row_number}: los precios y cantidades deben ser numéricos')
-            continue
-
-        key = (str(product_name).strip(), str(category_name).strip())
-        grouped.setdefault(key, []).append({
-            'name': str(variant_name).strip(),
-            'image_url': str(import_value(row, 'Imagen', 'Image', 'image_url') or '').strip() or None,
-            'price': price,
-            'wholesale_price': wholesale_price,
-            'wholesale_min_qty': wholesale_min_qty,
-            'available': parse_boolean(import_value(row, 'Disponible', 'Available', 'available')),
-        })
+    grouped, errors = parse_import_data(rows)
 
     if errors:
         return jsonify({'error': 'El archivo contiene errores', 'details': errors}), 400
@@ -484,7 +467,7 @@ def import_products():
             description=None,
             price=variants[0]['price'],
             wholesale_price=variants[0]['wholesale_price'],
-            wholesale_min_qty=variants[0]['wholesale_min_qty'],
+            wholesale_enabled=any(variant['wholesale_enabled'] for variant in variants),
             image_url=variants[0]['image_url'],
             category_id=category.id,
             available=any(variant['available'] for variant in variants),
@@ -506,10 +489,10 @@ def update_product(product_id):
     product.name = data.get('name', product.name)
     product.description = data.get('description', product.description)
     product.price = float(data.get('price', product.price))
+    product.wholesale_enabled = bool(data.get('wholesale_enabled', product.wholesale_enabled))
     product.wholesale_price = (
         float(data['wholesale_price']) if data.get('wholesale_price') is not None else product.wholesale_price
     )
-    product.wholesale_min_qty = int(data.get('wholesale_min_qty', product.wholesale_min_qty))
     product.image_url = data.get('image_url', product.image_url)
     product.category_id = data.get('category_id', product.category_id)
     product.available = data.get('available', product.available)

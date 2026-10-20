@@ -25,7 +25,7 @@ El propietario del negocio recibirá el pedido por WhatsApp y decidirá manualme
 ## Sí necesitamos
 
 * Catálogo de productos.
-* Categorías.
+* Categorías: Bolsos, Cosmetiqueras, Tarjeteros y Accesorios.
 * Imágenes de productos.
 * Posibilidad de agregar variantes de colores a ciertos productos (opcional).
 * Precio.
@@ -33,7 +33,9 @@ El propietario del negocio recibirá el pedido por WhatsApp y decidirá manualme
 * Página de detalle de producto.
 * Carrito.
 * Cantidades en carrito.
-* Manejo de precios de mayoreo y menudeo. (mostrar ambos precios y tomar el de mayoreo cuando son 6 piezas o más)
+* Manejo de precios de mayoreo y menudeo. El mínimo de piezas se configura por categoría y cuenta las piezas combinadas de los productos que tengan mayoreo activado; cada variante conserva su precio mayorista.
+* Categorías vigentes: Bolsos, Cosmetiqueras, Tarjeteros y Accesorios.
+* Los productos de Accesorios cuyo nombre inicia con “Dije” permiten seleccionar: Abeja, Beetle, Buttlerfly, Lucky Clover, Lucky Star, Luna, Mano de Fatima, Ojo o Teddy Bear.
 * Cálculo de subtotales y total.
 * Generación de mensaje de WhatsApp.
 * Panel administrativo.

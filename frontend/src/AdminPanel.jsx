@@ -27,7 +27,7 @@ import DeleteIcon from '@mui/icons-material/Delete'
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
 const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-const ADMIN_CATEGORIES = ['Bolsos', 'Carteras', 'Tarjeteros', 'Accesorios']
+const ADMIN_CATEGORIES = ['Bolsos', 'Cosmetiqueras', 'Tarjeteros', 'Accesorios']
 
 const fetchAdminProductPage = async (token, page, perPage, search) => {
   const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
@@ -74,19 +74,19 @@ const emptyVariant = () => ({
   image_url: '',
   price: '',
   wholesale_price: '',
-  wholesale_min_qty: 6,
   available: true,
 })
 
 function AdminPanel({ onClose, onSaved = () => {} }) {
   const [token, setToken] = useState(() => sessionStorage.getItem('adminToken') || '')
   const [credentials, setCredentials] = useState({ username: '', password: '' })
-  const [form, setForm] = useState({ name: '', description: '', category_id: '', variants: [emptyVariant()] })
+  const [form, setForm] = useState({ name: '', description: '', category_id: '', wholesale_enabled: false, variants: [emptyVariant()] })
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [authenticating, setAuthenticating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [categoryOptions, setCategoryOptions] = useState([])
+  const [savingCategoryId, setSavingCategoryId] = useState(null)
   const [adminProducts, setAdminProducts] = useState([])
   const [adminProductsTotal, setAdminProductsTotal] = useState(0)
   const [adminPage, setAdminPage] = useState(0)
@@ -120,7 +120,9 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
     fetch(`${API_BASE_URL}/categories`)
       .then((response) => response.json())
       .then((categories) => setCategoryOptions(
-        categories.filter((category) => ADMIN_CATEGORIES.includes(category.name)),
+        categories
+          .filter((category) => ADMIN_CATEGORIES.includes(category.name))
+          .map((category) => ({ ...category, wholesale_min_qty: category.wholesale_min_qty || 6 })),
       ))
       .catch(() => setCategoryOptions([]))
   }, [])
@@ -179,6 +181,29 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
     }))
   }
 
+  const saveCategoryWholesaleMinimum = async (category) => {
+    setError('')
+    setSavingCategoryId(category.id)
+    try {
+      const response = await fetch(`${API_BASE_URL}/categories/${category.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ wholesale_min_qty: Number(category.wholesale_min_qty) }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'No se pudo guardar el mínimo de la categoría')
+      setCategoryOptions((current) => current.map((item) => item.id === data.id ? data : item))
+      setMessage(`Mínimo mayorista actualizado para ${data.name}`)
+    } catch (saveError) {
+      setError(saveError.message)
+    } finally {
+      setSavingCategoryId(null)
+    }
+  }
+
   const uploadImage = async (index, file) => {
     if (!file || !CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) {
       setError('Configura Cloudinary antes de subir imágenes')
@@ -222,11 +247,11 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
         name: form.name,
         description: form.description,
         category_id: Number(form.category_id),
+        wholesale_enabled: form.wholesale_enabled,
         variants: form.variants.map((variant) => ({
           ...variant,
           price: Number(variant.price),
           wholesale_price: variant.wholesale_price === '' ? null : Number(variant.wholesale_price),
-          wholesale_min_qty: Number(variant.wholesale_min_qty),
         })),
       }),
     })
@@ -238,7 +263,7 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
     }
     const wasEditing = Boolean(editingId)
     setMessage(wasEditing ? 'Producto actualizado correctamente' : 'Producto creado correctamente')
-    setForm({ name: '', description: '', category_id: '', variants: [emptyVariant()] })
+    setForm({ name: '', description: '', category_id: '', wholesale_enabled: false, variants: [emptyVariant()] })
     setEditingId(null)
     setFormOpen(false)
     await reloadAdminProducts()
@@ -254,12 +279,12 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
         name: details.name,
         description: details.description || '',
         category_id: details.category_id,
+        wholesale_enabled: details.wholesale_enabled,
         variants: details.variants.map((variant) => ({
           name: variant.name,
           image_url: variant.image_url || '',
           price: variant.price,
           wholesale_price: variant.wholesale_price ?? '',
-          wholesale_min_qty: variant.wholesale_min_qty || 6,
           available: variant.available,
         })),
       })
@@ -408,7 +433,7 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
                   sx={{ flex: 1, minHeight: 46 }}
                   onClick={() => {
                     setEditingId(null)
-                    setForm({ name: '', description: '', category_id: '', variants: [emptyVariant()] })
+                    setForm({ name: '', description: '', category_id: '', wholesale_enabled: false, variants: [emptyVariant()] })
                     setFormOpen(true)
                   }}
                 >
@@ -418,8 +443,41 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
             </Box>
 
             <Alert severity="info" sx={{ mb: 2 }}>
-              Cada fila del archivo representa una variante. La imagen es opcional.
+              Cada fila representa una variante. La imagen es opcional; “Aplica mayoreo” es opcional y el mínimo se toma de la categoría.
             </Alert>
+
+            <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>Mayoreo por categoría</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Define desde cuántas piezas aplica el precio mayorista en cada categoría.
+              </Typography>
+              <Grid container spacing={1.5}>
+                {categoryOptions.map((category) => (
+                  <Grid size={{ xs: 12, sm: 6 }} key={category.id}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <TextField
+                        fullWidth
+                        size="small"
+                        type="number"
+                        label={`${category.name}: mínimo de piezas`}
+                        value={category.wholesale_min_qty}
+                        inputProps={{ min: 1, step: 1 }}
+                        onChange={(event) => setCategoryOptions((current) => current.map((item) => (
+                          item.id === category.id ? { ...item, wholesale_min_qty: event.target.value } : item
+                        )))}
+                      />
+                      <Button
+                        variant="outlined"
+                        disabled={savingCategoryId === category.id || Number(category.wholesale_min_qty) < 1}
+                        onClick={() => saveCategoryWholesaleMinimum(category)}
+                      >
+                        {savingCategoryId === category.id ? 'Guardando...' : 'Guardar'}
+                      </Button>
+                    </Stack>
+                  </Grid>
+                ))}
+              </Grid>
+            </Paper>
 
             <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
               <Typography variant="h6" sx={{ mb: 1 }}>Inventario maestro</Typography>
@@ -609,6 +667,22 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
                   onChange={(event) => setForm({ ...form, description: event.target.value })}
                 />
               </Grid>
+              <Grid size={12}>
+                <FormControlLabel
+                  control={(
+                    <Checkbox
+                      checked={form.wholesale_enabled}
+                      onChange={(event) => setForm({ ...form, wholesale_enabled: event.target.checked })}
+                    />
+                  )}
+                  label="Este producto aplica precio mayorista"
+                />
+                <Typography variant="caption" color="text.secondary" display="block">
+                  {categoryOptions.find((category) => category.id === Number(form.category_id))
+                    ? `En esta categoría aplica desde ${categoryOptions.find((category) => category.id === Number(form.category_id)).wholesale_min_qty} piezas.`
+                    : 'Elige una categoría para ver su mínimo mayorista.'}
+                </Typography>
+              </Grid>
             </Grid>
 
             <Divider sx={{ my: 3 }} />
@@ -642,14 +716,18 @@ function AdminPanel({ onClose, onSaved = () => {} }) {
                       </Button>
                     </Stack>
                   </Grid>
-                  <Grid size={{ xs: 12, sm: 4 }}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField fullWidth type="number" label="Precio" value={variant.price} onChange={(event) => updateVariant(index, 'price', event.target.value)} required />
                   </Grid>
-                  <Grid size={{ xs: 12, sm: 4 }}>
-                    <TextField fullWidth type="number" label="Precio mayorista" value={variant.wholesale_price} onChange={(event) => updateVariant(index, 'wholesale_price', event.target.value)} />
-                  </Grid>
-                  <Grid size={{ xs: 12, sm: 4 }}>
-                    <TextField fullWidth type="number" label="Mayoreo desde" value={variant.wholesale_min_qty} onChange={(event) => updateVariant(index, 'wholesale_min_qty', event.target.value)} />
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Precio mayorista"
+                      value={variant.wholesale_price}
+                      onChange={(event) => updateVariant(index, 'wholesale_price', event.target.value)}
+                      disabled={!form.wholesale_enabled}
+                    />
                   </Grid>
                   <Grid size={12}>
                     <FormControlLabel

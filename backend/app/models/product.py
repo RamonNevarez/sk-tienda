@@ -10,6 +10,7 @@ class Product(db.Model):
     price = db.Column(db.Float, nullable=False)
     wholesale_price = db.Column(db.Float, nullable=True)
     wholesale_min_qty = db.Column(db.Integer, nullable=False, default=6)
+    wholesale_enabled = db.Column(db.Boolean, nullable=False, default=False)
     colors = db.Column(db.JSON, nullable=False, default=list)
     image_url = db.Column(db.String(255), nullable=True)
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)

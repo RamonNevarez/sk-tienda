@@ -15,6 +15,7 @@ def get_categories():
             'id': c.id,
             'name': c.name,
             'description': c.description,
+            'wholesale_min_qty': c.wholesale_min_qty,
         }
         for c in categories
     ])
@@ -30,11 +31,16 @@ def create_category():
     if not name:
         return jsonify({'error': 'El nombre es requerido'}), 400
 
-    category = Category(name=name, description=description)
+    try:
+        wholesale_min_qty = max(1, int(data.get('wholesale_min_qty', 6)))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'El mínimo mayorista debe ser un número entero mayor a cero'}), 400
+
+    category = Category(name=name, description=description, wholesale_min_qty=wholesale_min_qty)
     db.session.add(category)
     db.session.commit()
 
-    return jsonify({'id': category.id, 'name': category.name, 'description': category.description}), 201
+    return jsonify({'id': category.id, 'name': category.name, 'description': category.description, 'wholesale_min_qty': category.wholesale_min_qty}), 201
 
 
 @categories_bp.put('/<int:category_id>')
@@ -45,9 +51,14 @@ def update_category(category_id):
 
     category.name = data.get('name', category.name)
     category.description = data.get('description', category.description)
+    if 'wholesale_min_qty' in data:
+        try:
+            category.wholesale_min_qty = max(1, int(data['wholesale_min_qty']))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'El mínimo mayorista debe ser un número entero mayor a cero'}), 400
     db.session.commit()
 
-    return jsonify({'id': category.id, 'name': category.name, 'description': category.description})
+    return jsonify({'id': category.id, 'name': category.name, 'description': category.description, 'wholesale_min_qty': category.wholesale_min_qty})
 
 
 @categories_bp.delete('/<int:category_id>')
